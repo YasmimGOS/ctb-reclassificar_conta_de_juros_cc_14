@@ -205,3 +205,48 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ==============================================================================
+# PROJECT-SPECIFIC: RPA Reclassificação de Conta de Juros CC14
+# ==============================================================================
+
+# Arquivos .env com credenciais reais (NÃO SUBIR)
+config/.env
+.env
+!config/.env.example
+
+
+# Logs directory (NÃO SUBIR)
+logs/
+*.log
+
+# Excel outputs gerados (NÃO SUBIR - podem conter dados sensíveis)
+*.xlsx
+*.xls
+*.csv
+!exemplo_*.xlsx
+
+# IDE específico (NÃO SUBIR)
+.idea/
+.vscode/
+
+# Scripts de teste temporários (AVALIAR)
+tests/test_database.py
+services/diagnostico_sharepoint.py
+!tests/test_execution.py
+
+# Database (NÃO SUBIR)
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets and credentials (NÃO SUBIR)
+secrets.*
+credentials.*
+*.key
+*.pem
+
+# Arquivos temporários (NÃO SUBIR)
+*.tmp
+*.temp
+*.bak

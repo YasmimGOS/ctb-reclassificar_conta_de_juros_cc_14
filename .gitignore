@@ -250,3 +250,7 @@ credentials.*
 *.tmp
 *.temp
 *.bak
+nul
+
+# Documentação de planejamento Claude (NÃO SUBIR)
+claude/

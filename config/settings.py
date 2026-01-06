@@ -24,13 +24,23 @@ def get_client_secret() -> str:
 
 
 def get_site_id() -> str:
-    """Retorna SITE_ID do SharePoint."""
+    """Retorna SITE_ID do SharePoint (DEPRECATED - use get_drive_id)."""
     return os.getenv("SITE_ID", "")
 
 
 def get_drive_item_id() -> str:
-    """Retorna DRIVE_ITEM_ID da pasta no SharePoint."""
+    """Retorna DRIVE_ITEM_ID da pasta no SharePoint (DEPRECATED - use get_folder_path)."""
     return os.getenv("DRIVE_ITEM_ID", "")
+
+
+def get_drive_id() -> str:
+    """Retorna DRIVE_ID do SharePoint (formato novo)."""
+    return os.getenv("DRIVE_ID", "")
+
+
+def get_folder_path() -> str:
+    """Retorna FOLDER_PATH do SharePoint (caminho relativo da pasta)."""
+    return os.getenv("FOLDER_PATH", "")
 
 
 # Power Automate

@@ -15,7 +15,9 @@ from config.settings import (
     get_client_id,
     get_client_secret,
     get_site_id,
-    get_drive_item_id
+    get_drive_item_id,
+    get_drive_id,
+    get_folder_path
 )
 
 
@@ -77,12 +79,29 @@ def upload_to_sharepoint(df: pd.DataFrame, access_token: str) -> tuple[bool, str
         logging.info(f"[DRY_RUN] Total de linhas: {len(df)}")
         return True, ""
 
-    site_id = get_site_id()
-    drive_folder_id = get_drive_item_id()
-
     # Incluir timestamp completo para evitar conflitos (erro 423 - arquivo bloqueado)
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     filename = f"Reclassificação cc14 {timestamp}.xlsx"
+
+    # Verificar qual formato de configuração usar (preferência pelo novo formato)
+    drive_id = get_drive_id()
+    folder_path = get_folder_path()
+
+    if drive_id and folder_path:
+        # Formato novo: DRIVE_ID + FOLDER_PATH
+        # URL: /drives/{drive-id}/root:/{folder-path}/{filename}:/content
+        url_base = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:/{folder_path}/{filename}:/content"
+        logging.info(f"Usando formato novo: DRIVE_ID + FOLDER_PATH")
+        logging.info(f"Drive ID: {drive_id}")
+        logging.info(f"Pasta: {folder_path}")
+    else:
+        # Formato antigo (fallback): SITE_ID + DRIVE_ITEM_ID
+        site_id = get_site_id()
+        drive_folder_id = get_drive_item_id()
+        url_base = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{drive_folder_id}:/{filename}:/content"
+        logging.info(f"Usando formato antigo: SITE_ID + DRIVE_ITEM_ID")
+        logging.info(f"Site ID: {site_id}")
+        logging.info(f"Drive Item ID: {drive_folder_id}")
 
     # 1. Preparar DataFrame para Excel com colunas VALORCREDITO e VALORDEBITO
     df_excel = df.copy()
@@ -111,7 +130,7 @@ def upload_to_sharepoint(df: pd.DataFrame, access_token: str) -> tuple[bool, str
     output.seek(0)
 
     # 3. API Upload com retry (máximo 3 tentativas)
-    url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{drive_folder_id}:/{filename}:/content"
+    url = url_base
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -143,9 +162,13 @@ def upload_to_sharepoint(df: pd.DataFrame, access_token: str) -> tuple[bool, str
                     # Na última tentativa, adicionar sufixo único
                     if tentativa == max_retries - 1:
                         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                        filename = f"Reclassificação cc14 {timestamp}_v{tentativa}.xlsx"
-                        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{drive_folder_id}:/{filename}:/content"
-                        logging.info(f"Tentando com novo nome: {filename}")
+                        filename_retry = f"Reclassificação cc14 {timestamp}_v{tentativa}.xlsx"
+                        # Reconstruir URL com novo nome
+                        if drive_id and folder_path:
+                            url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:/{folder_path}/{filename_retry}:/content"
+                        else:
+                            url = f"https://graph.microsoft.com/v1.0/sites/{get_site_id()}/drive/items/{get_drive_item_id()}:/{filename_retry}:/content"
+                        logging.info(f"Tentando com novo nome: {filename_retry}")
                     continue
                 else:
                     logging.error(f"Erro 423: Arquivo bloqueado no SharePoint após {max_retries} tentativas")
@@ -156,11 +179,13 @@ def upload_to_sharepoint(df: pd.DataFrame, access_token: str) -> tuple[bool, str
             if tentativa == max_retries:
                 logging.error(f"Erro de upload após {max_retries} tentativas: {e}")
                 logging.error(f"URL tentada: {url}")
-                logging.error(f"SITE_ID configurado: {site_id}")
-                logging.error(f"DRIVE_ITEM_ID configurado: {drive_folder_id}")
-                logging.error("Verifique se SITE_ID e DRIVE_ITEM_ID estão corretos no .env")
-                logging.error("Para obter SITE_ID: https://graph.microsoft.com/v1.0/sites/{hostname}:/{site-path}")
-                logging.error("Para obter DRIVE_ITEM_ID: https://graph.microsoft.com/v1.0/sites/{site-id}/drive/root/children")
+                if drive_id and folder_path:
+                    logging.error(f"DRIVE_ID configurado: {drive_id}")
+                    logging.error(f"FOLDER_PATH configurado: {folder_path}")
+                else:
+                    logging.error(f"SITE_ID configurado: {get_site_id()}")
+                    logging.error(f"DRIVE_ITEM_ID configurado: {get_drive_item_id()}")
+                logging.error("Verifique as variáveis de ambiente no .env")
                 return False, ""
             else:
                 logging.warning(f"Erro na tentativa {tentativa}/{max_retries}: {e}. Tentando novamente...")

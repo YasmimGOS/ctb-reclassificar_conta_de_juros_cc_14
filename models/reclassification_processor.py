@@ -19,13 +19,15 @@ def processar_reclassificacao(
     Processa o JSON da API e aplica as regras de negócio.
 
     REGRAS DE NEGÓCIO:
-    1. Diretoria Financeira (11102001) vai pro Excel mas NÃO pros lançamentos
-       - Motivo: Ela receberá o lançamento de DÉBITO (contrapartida dos créditos)
-    2. Diretoria Operacional (12200001) é REMOVIDA dos créditos
-       - Motivo: Não faz parte da reclassificação
-       - Porém é INCLUÍDA no cálculo do somatório do débito
-    3. Cálculo do débito: Soma TODOS os centros (incluindo Dir. Operacional),
-       exceto Diretoria Financeira
+    1. Diretoria Financeira (11102001) é DESCONSIDERADA:
+       - NÃO vai para os lançamentos de CRÉDITO
+       - NÃO entra no cálculo do DÉBITO
+       - Vai apenas para o Excel (relatório completo)
+    2. Diretoria Operacional (12200001) e demais centros:
+       - Vão para os lançamentos de CRÉDITO
+       - Entram no cálculo do DÉBITO
+    3. Cálculo do débito: Soma de TODOS os VALORCREDITO (positivos e negativos),
+       EXCETO Diretoria Financeira
 
     Args:
         dados_api: Lista de dicionários com dados da API
@@ -49,42 +51,37 @@ def processar_reclassificacao(
 
         # 1. Separar Diretoria Financeira (vai pro Excel mas não pros lançamentos)
         df_diretoria_financeira = df[df['CENTROCUSTO'] == '11102001-Diretoria Financeira'].copy()
-        df_sem_financeira = df[df['CENTROCUSTO'] != '11102001-Diretoria Financeira'].copy()
+        df_creditos = df[df['CENTROCUSTO'] != '11102001-Diretoria Financeira'].copy()
 
         logging.info(
             f"Diretoria Financeira: {len(df_diretoria_financeira)} registros "
-            f"(vai pro Excel mas não para lançamento)"
+            f"(vai pro Excel mas NÃO vai para lançamentos)"
         )
-        logging.info(f"Outros centros de custo: {len(df_sem_financeira)} registros")
-
-        # 2. Separar Diretoria Operacional dos demais
-        df_diretoria_op = df_sem_financeira[
-            df_sem_financeira['CENTROCUSTO'] == '12200001-Diretoria Operacional'
-        ].copy()
-        df_creditos = df_sem_financeira[
-            df_sem_financeira['CENTROCUSTO'] != '12200001-Diretoria Operacional'
-        ].copy()
-
-        # 3. Calcular somatório de TODOS os centros (exceto Dir. Financeira)
-        # Inclui Diretoria Operacional no cálculo do débito
-        valor_razao_diretoria_op = df_sem_financeira['VALORCREDITO'].sum()
         logging.info(
-            f"Valor total para débito (Diretoria Financeira): R$ {valor_razao_diretoria_op:,.2f}"
+            f"Centros de custo para CRÉDITO: {len(df_creditos)} registros "
+            f"(incluindo Diretoria Operacional)"
         )
 
-        # 4. Extrair informações da Diretoria Financeira (para o débito)
+        # 2. Calcular somatório de TODOS os valores (positivos e negativos) exceto Dir. Financeira
+        # Inclui Diretoria Operacional e todos os demais centros
+        valor_total_creditos = df_creditos['VALORCREDITO'].sum()
+        logging.info(
+            f"Valor total para débito (positivos + negativos): R$ {valor_total_creditos:,.2f}"
+        )
+
+        # 3. Extrair informações da Diretoria Financeira (para o débito)
         diretoria_financeira_info = None
         if len(df_diretoria_financeira) > 0:
             diretoria_financeira_info = {
                 'FIL_IN_CODIGO': df_diretoria_financeira.iloc[0]['FIL_IN_CODIGO'],
                 'CUS_IN_REDUZIDO': df_diretoria_financeira.iloc[0]['CUS_IN_REDUZIDO'],
                 'CENTROCUSTO': df_diretoria_financeira.iloc[0]['CENTROCUSTO'],
-                'VALOR': valor_razao_diretoria_op  # Soma de todos os créditos
+                'VALOR': valor_total_creditos  # Soma de todos os créditos (exceto Dir. Financeira)
             }
         else:
             logging.warning("Diretoria Financeira não encontrada no JSON original")
 
-        # 5. DataFrame completo para Excel (inclui TODOS os registros)
+        # 4. DataFrame completo para Excel (inclui TODOS os registros originais)
         return df_creditos, diretoria_financeira_info, df
 
     except Exception as e:

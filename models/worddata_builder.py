@@ -17,16 +17,16 @@ def montar_word_data(
     Monta a estrutura WordData para a API de lançamento contábil.
 
     ESTRUTURA WORDDATA:
-    - 23 itens de CRÉDITO (todos os centros exceto Dir. Financeira e Dir. Operacional)
+    - N itens de CRÉDITO (todos os centros EXCETO Diretoria Financeira)
+      * Inclui Diretoria Operacional e todos os demais centros de custo
     - 1 item de DÉBITO (Diretoria Financeira com valor = soma de todos os créditos)
-    - Total: 24 itens no payload
 
     Por quê Diretoria Financeira é débito?
     - Contabilmente, os créditos nos centros de custo precisam de uma contrapartida.
     - A Dir. Financeira recebe o débito total para fechar o lançamento.
 
     Args:
-        df_creditos: DataFrame com os centros de custo para crédito
+        df_creditos: DataFrame com os centros de custo para crédito (exceto Dir. Financeira)
         diretoria_financeira_info: Dict com informações da Diretoria Financeira
 
     Returns:

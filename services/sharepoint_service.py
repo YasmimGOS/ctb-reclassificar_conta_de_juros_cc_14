@@ -5,6 +5,7 @@ Responsável por autenticação e upload de arquivos Excel.
 """
 import io
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 import pandas as pd
@@ -78,7 +79,10 @@ def upload_to_sharepoint(df: pd.DataFrame, access_token: str) -> tuple[bool, str
 
     site_id = get_site_id()
     drive_folder_id = get_drive_item_id()
-    filename = f"Reclassificação cc14 {datetime.now().strftime('%Y%m%d')}.xlsx"
+
+    # Incluir timestamp completo para evitar conflitos (erro 423 - arquivo bloqueado)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f"Reclassificação cc14 {timestamp}.xlsx"
 
     # 1. Preparar DataFrame para Excel com colunas VALORCREDITO e VALORDEBITO
     df_excel = df.copy()
@@ -87,9 +91,10 @@ def upload_to_sharepoint(df: pd.DataFrame, access_token: str) -> tuple[bool, str
     if 'CONTA' in df_excel.columns:
         df_excel = df_excel.drop(columns=['CONTA'])
 
-    # Calcular somatório de todos os VALORCREDITO positivos
-    soma_creditos = df_excel[df_excel['VALORCREDITO'] > 0]['VALORCREDITO'].sum()
-    logging.info(f"Somatório de VALORCREDITO positivos: R$ {soma_creditos:,.2f}")
+    # Calcular somatório de TODOS os VALORCREDITO (positivos + negativos), exceto Dir. Financeira
+    df_sem_financeira = df_excel[df_excel['CENTROCUSTO'] != '11102001-Diretoria Financeira']
+    soma_creditos = df_sem_financeira['VALORCREDITO'].sum()
+    logging.info(f"Somatório de VALORCREDITO (todos os valores): R$ {soma_creditos:,.2f}")
 
     # Criar coluna VALORDEBITO com valor None por padrão
     df_excel['VALORDEBITO'] = None
@@ -105,30 +110,61 @@ def upload_to_sharepoint(df: pd.DataFrame, access_token: str) -> tuple[bool, str
         df_excel.to_excel(writer, index=False, sheet_name='Lancamentos')
     output.seek(0)
 
-    # 3. API Upload
+    # 3. API Upload com retry (máximo 3 tentativas)
     url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{drive_folder_id}:/{filename}:/content"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     }
 
-    try:
-        response = SESSION_GRAPH.put(url, headers=headers, data=output.read(), timeout=60)
-        response.raise_for_status()
+    max_retries = 3
+    for tentativa in range(1, max_retries + 1):
+        try:
+            output.seek(0)  # Reset buffer position
+            response = SESSION_GRAPH.put(url, headers=headers, data=output.read(), timeout=60)
+            response.raise_for_status()
 
-        # Extrair webUrl da resposta
-        response_data = response.json()
-        web_url = response_data.get("webUrl", "")
+            # Extrair webUrl da resposta
+            response_data = response.json()
+            web_url = response_data.get("webUrl", "")
 
-        logging.info(f"Relatório enviado ao SharePoint: {filename}")
-        logging.info(f"Link do arquivo: {web_url}")
-        return True, web_url
-    except Exception as e:
-        logging.error(f"Erro de upload: {e}")
-        logging.error(f"URL tentada: {url}")
-        logging.error(f"SITE_ID configurado: {site_id}")
-        logging.error(f"DRIVE_ITEM_ID configurado: {drive_folder_id}")
-        logging.error("Verifique se SITE_ID e DRIVE_ITEM_ID estão corretos no .env")
-        logging.error("Para obter SITE_ID: https://graph.microsoft.com/v1.0/sites/{hostname}:/{site-path}")
-        logging.error("Para obter DRIVE_ITEM_ID: https://graph.microsoft.com/v1.0/sites/{site-id}/drive/root/children")
-        return False, ""
+            logging.info(f"Relatório enviado ao SharePoint: {filename}")
+            logging.info(f"Link do arquivo: {web_url}")
+            return True, web_url
+
+        except Exception as e:
+            # Verificar se é erro 423 (Locked)
+            if hasattr(e, 'response') and hasattr(e.response, 'status_code') and e.response.status_code == 423:
+                if tentativa < max_retries:
+                    wait_time = tentativa * 2  # Backoff: 2s, 4s, 6s
+                    logging.warning(f"Arquivo bloqueado (423). Tentativa {tentativa}/{max_retries}. Aguardando {wait_time}s...")
+                    time.sleep(wait_time)
+
+                    # Na última tentativa, adicionar sufixo único
+                    if tentativa == max_retries - 1:
+                        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                        filename = f"Reclassificação cc14 {timestamp}_v{tentativa}.xlsx"
+                        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{drive_folder_id}:/{filename}:/content"
+                        logging.info(f"Tentando com novo nome: {filename}")
+                    continue
+                else:
+                    logging.error(f"Erro 423: Arquivo bloqueado no SharePoint após {max_retries} tentativas")
+                    logging.error("Possíveis causas: arquivo aberto por outro usuário, lock de sincronização OneDrive")
+                    logging.error("Solução: Feche o arquivo no SharePoint/Excel e tente novamente")
+
+            # Outros erros ou última tentativa
+            if tentativa == max_retries:
+                logging.error(f"Erro de upload após {max_retries} tentativas: {e}")
+                logging.error(f"URL tentada: {url}")
+                logging.error(f"SITE_ID configurado: {site_id}")
+                logging.error(f"DRIVE_ITEM_ID configurado: {drive_folder_id}")
+                logging.error("Verifique se SITE_ID e DRIVE_ITEM_ID estão corretos no .env")
+                logging.error("Para obter SITE_ID: https://graph.microsoft.com/v1.0/sites/{hostname}:/{site-path}")
+                logging.error("Para obter DRIVE_ITEM_ID: https://graph.microsoft.com/v1.0/sites/{site-id}/drive/root/children")
+                return False, ""
+            else:
+                logging.warning(f"Erro na tentativa {tentativa}/{max_retries}: {e}. Tentando novamente...")
+                time.sleep(2)
+                continue
+
+    return False, ""

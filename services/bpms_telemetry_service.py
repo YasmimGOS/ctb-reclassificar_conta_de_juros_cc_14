@@ -11,7 +11,7 @@ _HEADERS = {"Content-Type": "application/json", "Authorization": f"Bearer {_BPMS
 
 NOME_PROCESSO = "ctb-Reclassificar Conta de Juros CC 14"
 NOME_FLUXO = "ctb-reclassificar_conta_de_juros_cc_14"
-FREQUENCIA_DISPARO = "Mensal (Dia útil 3 às 02:00 am) crontab 0 2 * * 1-5"
+FREQUENCIA_DISPARO = "Mensal (Dia útil 3 às 02:00 am)"
 TIPO_FLUXO = "Python"
 TIPO_ARQUIVO = "Lançamento Mega"
 VERSAO_FLUXO = "Fluxo v1."

@@ -96,15 +96,10 @@ def test_sharepoint_teams() -> bool:
     return os.getenv("TEST_SHAREPOINT_TEAMS", "false").lower() == "true"
 
 
-# Telemetria (PostgreSQL)
-EXECUTION_DB_DSN = os.getenv("EXECUTION_DB_DSN")
+# Telemetria BPMS
+def get_bpms_enabled() -> str:
+    return os.getenv("BPMS_ENABLED", "TRUE")
 
 
-def is_telemetry_enabled() -> bool:
-    """
-    Verifica se telemetria está habilitada.
-
-    Returns:
-        True se EXECUTION_DB_DSN está configurado, False caso contrário
-    """
-    return EXECUTION_DB_DSN is not None
+def get_em_producao() -> str:
+    return os.getenv("EM_PRODUCAO", "FALSE")

@@ -10,7 +10,7 @@ Processo automatizado que executa no 3º dia útil de cada mês para:
 5. Notificar sucesso no Teams
 
 Dependências:
-- PostgreSQL (opcional): Telemetria de execução
+- BPMS: Telemetria de execução
 - Microsoft Graph: SharePoint upload
 - Power Automate: Notificações Teams
 - APIs externas: Reclassificação e MegaIntegrador
@@ -61,7 +61,6 @@ critical_vars = [
     "TENANT_ID",
     "CLIENT_ID",
     "CLIENT_SECRET",
-    "EXECUTION_DB_DSN"
 ]
 missing_vars = [var for var in critical_vars if not os.getenv(var)]
 if missing_vars:

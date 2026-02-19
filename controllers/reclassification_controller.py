@@ -5,6 +5,7 @@ Controller de Reclassificação de Conta de Juros CC14.
 Orquestra o fluxo completo de 9 steps do processo.
 """
 import logging
+from datetime import datetime
 from utils.business_calendar import deve_executar_processo, calcular_datas_mes_anterior
 from services.reclassification_api import chamar_api_reclassificacao
 from models.reclassification_processor import processar_reclassificacao
@@ -12,14 +13,7 @@ from models.worddata_builder import montar_word_data
 from services.accounting_api import chamar_api_lancamento_contabil
 from services.sharepoint_service import get_graph_access_token, upload_to_sharepoint
 from services.teams_notifier import notificar_sucesso, notificar_erro_api
-from services.execution_tracking import (
-    start_run,
-    end_run_ok,
-    end_run_failed,
-    end_run_cancelled,
-    update_progress,
-    StepLogger
-)
+from services import bpms_telemetry_service as bpms
 
 
 def run():
@@ -37,83 +31,91 @@ def run():
     8. Upload para SharePoint
     9. Notificar sucesso no Teams
     """
+    id_disparo = None
+
     # Step 1: Verificar dia útil (antes de iniciar telemetria)
     if not deve_executar_processo():
         logging.info("Processo encerrado: hoje não é dia de execução.")
         return
 
-    # Iniciar telemetria (só registra se for executar)
-    run_id, started_at = start_run("ctb-reclassificar_conta_de_juros_cc_14")
+    # Iniciar telemetria BPMS (só registra se for executar)
+    data_inicio = datetime.now()
+    id_disparo = bpms.gerar_id_disparo(data_inicio)
+    bpms.primeiro_disparo(id_disparo, data_inicio)
+    bpms.segundo_disparo(id_disparo, 1)
+
+    progresso_atual = 0
 
     try:
-        logging.info(f"Iniciando processo de reclassificação de conta de juros CC 14 (run_id: {run_id})")
-        update_progress(run_id, 11.1)  # 1/9 = 11.1%
+        logging.info(f"Iniciando processo de reclassificação de conta de juros CC 14 (id_disparo: {id_disparo})")
+        progresso_atual = 11
+        bpms.update_progresso(id_disparo, progresso_atual)  # 1/9 = ~11%
 
         # Step 2: Calcular datas do mês anterior
-        with StepLogger(run_id, "calcular_datas", 2):
-            data_inicial, data_final = calcular_datas_mes_anterior()
-        update_progress(run_id, 22.2)  # 2/9
+        data_inicial, data_final = calcular_datas_mes_anterior()
+        progresso_atual = 22
+        bpms.update_progresso(id_disparo, progresso_atual)  # 2/9 = ~22%
 
         # Step 3: Chamar API de reclassificação
-        with StepLogger(run_id, "chamar_api_reclassificacao", 3):
-            dados_api = chamar_api_reclassificacao(data_inicial, data_final)
-            if not dados_api:
-                logging.critical("Processo encerrado: erro ao obter dados da API.")
-                end_run_failed(run_id, started_at, "API de reclassificação retornou erro")
-                exit(1)
-        update_progress(run_id, 33.3)  # 3/9
+        dados_api = chamar_api_reclassificacao(data_inicial, data_final)
+        if not dados_api:
+            logging.critical("Processo encerrado: erro ao obter dados da API.")
+            bpms.erro(id_disparo, Exception("API de reclassificação retornou erro"), 1, 0, [], progresso_atual)
+            exit(1)
+        progresso_atual = 33
+        bpms.update_progresso(id_disparo, progresso_atual)  # 3/9 = ~33%
 
         # Step 4: Processar dados
-        with StepLogger(run_id, "processar_dados", 4):
-            df_creditos, diretoria_financeira_info, df_completo = processar_reclassificacao(
-                dados_api, data_inicial, data_final
-            )
-            if df_creditos is None:
-                logging.critical("Processo encerrado: erro no processamento dos dados.")
-                end_run_failed(run_id, started_at, "Erro no processamento dos dados")
-                exit(1)
-        update_progress(run_id, 44.4)  # 4/9
+        df_creditos, diretoria_financeira_info, df_completo = processar_reclassificacao(
+            dados_api, data_inicial, data_final
+        )
+        if df_creditos is None:
+            logging.critical("Processo encerrado: erro no processamento dos dados.")
+            bpms.erro(id_disparo, Exception("Erro no processamento dos dados"), 1, 0, [], progresso_atual)
+            exit(1)
+        progresso_atual = 44
+        bpms.update_progresso(id_disparo, progresso_atual)  # 4/9 = ~44%
 
         # Step 5: Montar WordData
-        with StepLogger(run_id, "montar_worddata", 5):
-            itens_lancamento = montar_word_data(df_creditos, diretoria_financeira_info)
-        update_progress(run_id, 55.6)  # 5/9
+        itens_lancamento = montar_word_data(df_creditos, diretoria_financeira_info)
+        progresso_atual = 56
+        bpms.update_progresso(id_disparo, progresso_atual)  # 5/9 = ~56%
 
         # Step 6: Enviar lançamentos contábeis
-        with StepLogger(run_id, "enviar_lancamentos", 6):
-            sucesso_lancamento = chamar_api_lancamento_contabil(itens_lancamento, data_final)
-            if not sucesso_lancamento:
-                logging.critical("Processo encerrado: erro ao enviar lançamentos contábeis.")
-                end_run_failed(run_id, started_at, "Falha ao enviar lançamentos contábeis")
-                exit(1)
-        update_progress(run_id, 66.7)  # 6/9
+        sucesso_lancamento = chamar_api_lancamento_contabil(itens_lancamento, data_final)
+        if not sucesso_lancamento:
+            logging.critical("Processo encerrado: erro ao enviar lançamentos contábeis.")
+            bpms.erro(id_disparo, Exception("Falha ao enviar lançamentos contábeis"), 1, 0, [], progresso_atual)
+            exit(1)
+        progresso_atual = 67
+        bpms.update_progresso(id_disparo, progresso_atual)  # 6/9 = ~67%
 
         # Step 7: Autenticar Graph (SharePoint)
-        with StepLogger(run_id, "autenticar_graph", 7):
-            token = get_graph_access_token()
-            if not token:
-                logging.critical("Não foi possível obter token do Microsoft Graph")
-                notificar_erro_api("Falha na autenticação Microsoft Graph")
-                end_run_failed(run_id, started_at, "Falha na autenticação Microsoft Graph")
-                exit(1)
-        update_progress(run_id, 77.8)  # 7/9
+        token = get_graph_access_token()
+        if not token:
+            logging.critical("Não foi possível obter token do Microsoft Graph")
+            notificar_erro_api("Falha na autenticação Microsoft Graph")
+            bpms.erro(id_disparo, Exception("Falha na autenticação Microsoft Graph"), 1, 0, [], progresso_atual)
+            exit(1)
+        progresso_atual = 78
+        bpms.update_progresso(id_disparo, progresso_atual)  # 7/9 = ~78%
 
         # Step 8: Upload para SharePoint
-        with StepLogger(run_id, "upload_sharepoint", 8):
-            sucesso_upload, link_arquivo = upload_to_sharepoint(df_completo, token)
-            if not sucesso_upload:
-                logging.warning("Upload para SharePoint falhou, mas processo continua...")
-        update_progress(run_id, 88.9)  # 8/9
+        sucesso_upload, link_arquivo = upload_to_sharepoint(df_completo, token)
+        if not sucesso_upload:
+            logging.warning("Upload para SharePoint falhou, mas processo continua...")
+        progresso_atual = 89
+        bpms.update_progresso(id_disparo, progresso_atual)  # 8/9 = ~89%
 
         # Step 9: Notificar sucesso no Teams
-        with StepLogger(run_id, "notificar_teams", 9):
-            notificar_sucesso(df_creditos, diretoria_financeira_info, link_arquivo)
-        update_progress(run_id, 100.0)  # 9/9
+        notificar_sucesso(df_creditos, diretoria_financeira_info, link_arquivo)
+        progresso_atual = 100
+        bpms.update_progresso(id_disparo, progresso_atual)  # 9/9 = 100%
 
         logging.info("Processo concluído com sucesso!")
-        end_run_ok(run_id, started_at)
+        bpms.conclusao(id_disparo, 1, 1, [], 100)
 
     except Exception as e:
         logging.exception(f"Erro inesperado: {e}")
-        end_run_failed(run_id, started_at, str(e))
+        bpms.erro(id_disparo, e, 1, 0, [], progresso_atual)
         raise  # Re-lançar para manter comportamento original
